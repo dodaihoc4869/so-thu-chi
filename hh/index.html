@@ -174,6 +174,8 @@ button,input,select,textarea{font:inherit;color:inherit}
 .bkt .v{font-size:14.5px;font-weight:600;margin-top:2px;letter-spacing:-.03em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bkt .s{font-size:10px;color:var(--ink-3);margin-top:2px;line-height:1.35}
+.split2{display:grid;grid-template-columns:1fr 120px;gap:8px}
+.field .hint{font-size:11.5px;color:var(--ink-3);margin:5px 0 0;line-height:1.4}
 @media (max-width:400px){.bkt .v{font-size:12.5px}.bkt .s{font-size:9px}}
 .audit{margin-top:10px;padding:10px 12px;border-radius:var(--radius);background:var(--chi-soft);
   border:1px solid var(--chi);color:var(--chi);font-size:12.5px;font-weight:600}
@@ -468,6 +470,12 @@ button,input,select,textarea{font:inherit;color:inherit}
           <label>Quỹ mặc định khi câu không có mã</label>
           <select id="cfg-bucketdef"></select>
         </div>
+        <div class="field"><label>Lệnh tách một phần sang quỹ khác</label>
+          <input id="cfg-splitcode" placeholder="!chia"></div>
+        <div class="field"><label>Lệnh tách xếp khoản đó vào quỹ</label>
+          <select id="cfg-splitfrom"></select></div>
+        <div class="field"><label>Quỹ nhận phần tách</label>
+          <select id="cfg-splitto"></select></div>
       </div>
 
       <div class="panel">
@@ -577,6 +585,9 @@ const DEFAULT_CONFIG = {
     { id: "mobeo", name: "Mô beo",    keys: ["!mb", "!mobeo", "mô beo", "mo beo"] }
   ],
   DEFAULT_BUCKET: "rieng",
+  SPLIT_CODE: "!chia",      // khoản tiền ăn có một phần phải ghi sang nhà Mô beo
+  SPLIT_FROM: "an",         // quỹ của khoản đó khi câu không có mã quỹ nào khác
+  SPLIT_TO: "mobeo",        // quỹ nhận phần tách
   BACKUP_REMIND_ON_NEW_MONTH: true
 };
 
@@ -613,7 +624,20 @@ function bucketName(id) { const b = bucketList().find(x => x.id === id); return 
 function withBucket(list) {
   const ids = new Set(bucketList().map(b => b.id));
   const def = bucketDefault();
-  return (list || []).map(e => (e && ids.has(e.bucket)) ? e : Object.assign({}, e, { bucket: def }));
+  return (list || []).map(e => {
+    let r = (e && ids.has(e.bucket)) ? e : Object.assign({}, e, { bucket: def });
+    const a = Number(r.splitVnd) || 0;
+    const okTo = r.splitBucket && ids.has(r.splitBucket) && r.splitBucket !== r.bucket;
+    if (!a || !okTo) { if (r.splitVnd != null || r.splitBucket != null) r = Object.assign({}, r, { splitVnd: null, splitBucket: null }); }
+    else if (a > (r.amountVnd || 0)) r = Object.assign({}, r, { splitVnd: r.amountVnd || 0 });
+    return r;
+  });
+}
+/** Phần tách hợp lệ của một bản ghi, hoặc null. */
+function splitOf(e) {
+  const a = Number(e && e.splitVnd) || 0;
+  if (!a || !e.splitBucket || e.splitBucket === e.bucket) return null;
+  return { amount: Math.min(a, e.amountVnd || 0), to: e.splitBucket };
 }
 /** Di trú một chiều v1 -> v2. Khoá v1 giữ nguyên làm bản dự phòng, không xoá. */
 function loadEntries() {
@@ -659,7 +683,9 @@ const FLAG_TEXT = {
   5: "Ngày mơ hồ",
   6: "Ngày không hợp lệ",
   7: "Số tiền lớn — xác nhận lại",
-  8: "Có từ hai mã quỹ trong câu"
+  8: "Có từ hai mã quỹ trong câu",
+  9: "Lệnh tách thiếu số tiền",
+  10: "Số tách lớn hơn số tiền của khoản"
 };
 
 const AMBIG_DATE = ["tuần trước", "tuan truoc", "tuần rồi", "tuan roi", "đầu tháng", "dau thang",
@@ -871,6 +897,28 @@ function stripBucketCodes(raw) {
       if (String(k).startsWith("!")) out = out.replace(bucketRe(String(k).toLowerCase()), "$1");
   return out.replace(/\s{2,}/g, " ").trim();
 }
+/** Lệnh tách: "!chia 30k" — cắt cả cụm khỏi câu để bộ đếm tiền không thấy hai số. */
+function findSplit(raw) {
+  const code = String(CONFIG.SPLIT_CODE || "!chia").toLowerCase();
+  const units = CONFIG.UNIT_THOUSAND.concat(CONFIG.UNIT_MILLION)
+    .slice().sort((a, b) => b.length - a.length).map(reEsc).join("|");
+  const bare = new RegExp("(^|[^\\p{L}\\p{N}!])" + reEsc(code) + "(?![\\p{L}\\p{N}])", "iu");
+  if (!bare.test(String(raw))) return { amount: null, text: String(raw), flags: [], used: false };
+  const re = new RegExp("(^|[^\\p{L}\\p{N}!])" + reEsc(code) +
+    "\\s*([0-9][0-9.,]*)(\\s*(?:" + units + "))?(?![\\p{L}\\p{N}])", "iu");
+  const m = re.exec(String(raw));
+  if (m) {
+    const frag = (m[2] + (m[3] || "")).toLowerCase();
+    const got = parseAmounts(frag);
+    const amt = got.amounts.length ? got.amounts[0] : null;
+    const text = (String(raw).slice(0, m.index + m[1].length) +
+                  String(raw).slice(m.index + m[0].length)).replace(/\s{2,}/g, " ").trim();
+    return { amount: amt, text, flags: amt == null ? [9] : [], used: true };
+  }
+  // Có gõ lệnh nhưng thiếu số: vẫn cắt lệnh khỏi ghi chú và cờ hoá, không im lặng bỏ qua.
+  const text = String(raw).replace(bare, "$1").replace(/\s{2,}/g, " ").trim();
+  return { amount: null, text, flags: [9], used: true };
+}
 function findBucket(raw) {
   const ids = bucketHits(raw);
   if (ids.length === 0) return { id: bucketDefault(), flags: [] };
@@ -883,9 +931,12 @@ function parseSentence(raw, today) {
   today = today || new Date(todayISO() + "T00:00:00");
   const flags = [];
 
-  const bk = findBucket(raw);          // quỹ nhận trước, mã bị cắt khỏi câu
+  const sp = findSplit(raw);           // lệnh tách đọc trước, cắt cả cụm khỏi câu
+  sp.flags.forEach(f => flags.push(f));
+  const bk = findBucket(sp.text);      // rồi mới tới mã quỹ
   bk.flags.forEach(f => flags.push(f));
-  const text = stripBucketCodes(raw);
+  const explicitBucket = bucketHits(sp.text).length > 0;
+  const text = stripBucketCodes(sp.text);
   const low = text.toLowerCase();
 
   const dt = parseDate(low, today);
@@ -917,9 +968,16 @@ function parseSentence(raw, today) {
   else if (direction === "thu") category = CONFIG.CATEGORIES_INCOME[CONFIG.CATEGORIES_INCOME.length - 1].name;
   else if (direction === "chi") category = CONFIG.CATEGORIES_EXPENSE[CONFIG.CATEGORIES_EXPENSE.length - 1].name;
 
+  // Lệnh tách kéo khoản về quỹ nguồn, trừ khi câu đã gõ một mã quỹ khác.
+  const bucketFinal = (sp.used && !explicitBucket && CONFIG.SPLIT_FROM) ? CONFIG.SPLIT_FROM : bk.id;
+  let splitAmt = sp.amount || 0;
+  if (splitAmt && CONFIG.SPLIT_TO === bucketFinal) splitAmt = 0;
+  if (splitAmt && amount != null && splitAmt > amount) { flags.push(10); splitAmt = amount; }
+
   const uniq = [...new Set(flags)].sort((a, b) => a - b);
   return {
-    amountVnd: amount, direction, date: dt.date, category, bucket: bk.id,
+    amountVnd: amount, direction, date: dt.date, category, bucket: bucketFinal,
+    splitVnd: splitAmt, splitBucket: splitAmt ? CONFIG.SPLIT_TO : null,
     note: text.trim(), rawText: raw.trim(), flags: uniq, why
   };
 }
@@ -939,21 +997,54 @@ function sums(list) {
   return { thu, chi, con: thu - chi };
 }
 function bucketSums(list) {
-  const map = {}; bucketList().forEach(b => { map[b.id] = { thu: 0, chi: 0 }; });
+  const map = {};
+  bucketList().forEach(b => {
+    map[b.id] = { thu: 0, chi: 0, thuOut: 0, chiOut: 0, thuIn: 0, chiIn: 0, thuEff: 0, chiEff: 0 };
+  });
   const orphan = { thu: 0, chi: 0, n: 0 };
   list.forEach(e => {
     const t = map[e.bucket];
     if (!t) { orphan.n++; if (e.direction === "thu") orphan.thu += e.amountVnd; else orphan.chi += e.amountVnd; return; }
     if (e.direction === "thu") t.thu += e.amountVnd; else t.chi += e.amountVnd;
+    const sp = splitOf(e);
+    if (!sp) return;
+    const to = map[sp.to];
+    if (!to) return;                                  // quỹ nhận không còn: coi như không tách
+    if (e.direction === "thu") { t.thuOut += sp.amount; to.thuIn += sp.amount; }
+    else { t.chiOut += sp.amount; to.chiIn += sp.amount; }
+  });
+  Object.keys(map).forEach(k => {
+    const v = map[k];
+    v.thuEff = v.thu - v.thuOut + v.thuIn;
+    v.chiEff = v.chi - v.chiOut + v.chiIn;
   });
   return { map, orphan };
+}
+/** Số theo ngày của một quỹ, đã tính cả phần chuyển đi và nhận về. */
+function byDayForBucket(list, id) {
+  const map = {};
+  const add = (date, dir, v) => {
+    if (!v) return;
+    const d = map[date] || (map[date] = { thu: 0, chi: 0 });
+    if (dir === "thu") d.thu += v; else d.chi += v;
+  };
+  list.forEach(e => {
+    const sp = splitOf(e);
+    if (e.bucket === id) add(e.date, e.direction, e.amountVnd - (sp && sp.to !== id ? sp.amount : 0));
+    if (sp && sp.to === id && e.bucket !== id) add(e.date, e.direction, sp.amount);
+  });
+  return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
 }
 /** Tự kiểm: tổng các quỹ phải bằng tổng sổ. Lệch thì hiện cảnh báo đỏ, không im lặng. */
 function bucketAudit(list) {
   const s = sums(list); const r = bucketSums(list);
-  let thu = r.orphan.thu, chi = r.orphan.chi;
-  Object.keys(r.map).forEach(k => { thu += r.map[k].thu; chi += r.map[k].chi; });
-  return { ok: thu === s.thu && chi === s.chi && r.orphan.n === 0, thu, chi, s, orphan: r.orphan, map: r.map };
+  let thu = r.orphan.thu, chi = r.orphan.chi, thuE = r.orphan.thu, chiE = r.orphan.chi;
+  Object.keys(r.map).forEach(k => {
+    thu += r.map[k].thu;   chi += r.map[k].chi;
+    thuE += r.map[k].thuEff; chiE += r.map[k].chiEff;
+  });
+  return { ok: thu === s.thu && chi === s.chi && thuE === s.thu && chiE === s.chi && r.orphan.n === 0,
+           thu, chi, thuE, chiE, s, orphan: r.orphan, map: r.map };
 }
 function byDay(list) {
   const map = {};
@@ -1015,7 +1106,8 @@ function seedDemo() {
     const p = parseSentence(txt);
     return {
       id: uid(), amountVnd: p.amountVnd, direction: p.direction, date: d,
-      category: p.category, bucket: p.bucket, note: p.note, rawText: p.rawText, flag: null,
+      category: p.category, bucket: p.bucket, splitVnd: p.splitVnd || null,
+      splitBucket: p.splitVnd ? p.splitBucket : null, note: p.note, rawText: p.rawText, flag: null,
       demo: true, createdAt: Date.now(), updatedAt: Date.now()
     };
   });
@@ -1051,7 +1143,8 @@ $("#quickform").addEventListener("submit", ev => {
   if (p.flags.length) { openConfirm(p, null); return; }
   const e = {
     id: uid(), amountVnd: p.amountVnd, direction: p.direction, date: p.date,
-    category: p.category, bucket: p.bucket, note: p.note, rawText: p.rawText, flag: null,
+    category: p.category, bucket: p.bucket, splitVnd: p.splitVnd || null,
+    splitBucket: p.splitVnd ? p.splitBucket : null, note: p.note, rawText: p.rawText, flag: null,
     createdAt: Date.now(), updatedAt: Date.now()
   };
   ENTRIES.push(e); saveEntries();
@@ -1067,7 +1160,9 @@ function showEcho(e) {
     '<div class="echo is-' + e.direction + '">' +
       '<strong>' + (e.direction === "thu" ? "Thu" : "Chi") + '</strong>' +
       '<span class="num">' + money(e.amountVnd) + '</span>' +
-      '<span class="meta">' + esc(e.category) + ' · ' + esc(bucketName(e.bucket)) + ' · ' + dmy(e.date) + '</span>' +
+      '<span class="meta">' + esc(e.category) + ' · ' + esc(bucketName(e.bucket)) +
+        (splitOf(e) ? ' · tách ' + money(splitOf(e).amount) + ' sang ' + esc(bucketName(splitOf(e).to)) : '') +
+        ' · ' + dmy(e.date) + '</span>' +
       '<button class="flip" type="button">Đổi thành ' + (e.direction === "thu" ? "Chi" : "Thu") + '</button>' +
     '</div>';
   box.querySelector(".flip").addEventListener("click", () => {
@@ -1128,6 +1223,7 @@ function openConfirm(p, existingId) {
   const missDir = p.flags && p.flags.includes(3);
   const missDate = p.flags && (p.flags.includes(5) || p.flags.includes(6));
   const missBucket = p.flags && p.flags.includes(8);
+  const missSplit = p.flags && (p.flags.includes(9) || p.flags.includes(10));
 
   $("#modal").hidden = false;
   $("#modal").innerHTML =
@@ -1150,6 +1246,14 @@ function openConfirm(p, existingId) {
       bucketList().map(b => '<option value="' + esc(b.id) + '"' +
         (b.id === (p.bucket || bucketDefault()) ? " selected" : "") + '>' + esc(b.name) + '</option>').join("") +
     '</select></div>' +
+    '<div class="field' + (missSplit ? " miss" : "") + '"><label>Tách một phần sang quỹ khác</label>' +
+      '<div class="split2"><select id="f-splitb">' +
+        bucketList().map(b => '<option value="' + esc(b.id) + '"' +
+          (b.id === (p.splitBucket || CONFIG.SPLIT_TO) ? " selected" : "") + '>' + esc(b.name) + '</option>').join("") +
+      '</select>' +
+      '<input id="f-split" class="num" inputmode="numeric" placeholder="0" value="' +
+        (Number(p.splitVnd) || "") + '"></div>' +
+      '<p class="hint">Để trống là không tách. Ví dụ khoản chợ 60.000 có 30.000 của nhà Mô beo thì điền 30.000.</p></div>' +
     '<div class="field"><label>Ghi chú</label><input id="f-note" value="' + esc(p.note || "") + '"></div>' +
     '<div class="actions">' +
       (isEdit ? '<button class="btn danger" id="f-del" type="button">Xoá</button>' : "") +
@@ -1190,6 +1294,12 @@ function openConfirm(p, existingId) {
       category: $("#f-cat").value, bucket: $("#f-bucket").value, note: $("#f-note").value.trim(),
       rawText: p.rawText, flag: null, updatedAt: Date.now()
     };
+    const spAmt = Math.round(Number(String($("#f-split").value).replace(/[^\d]/g, "")) || 0);
+    const spTo = $("#f-splitb").value;
+    if (spAmt && spTo === rec.bucket) { alertBox("Quỹ nhận phải khác quỹ của khoản này."); return; }
+    if (spAmt > amt) { alertBox("Số tách (" + money(spAmt) + ") lớn hơn số tiền của khoản (" + money(amt) + ")."); return; }
+    rec.splitVnd = spAmt || null;
+    rec.splitBucket = spAmt ? spTo : null;
     if (isEdit) {
       const i = ENTRIES.findIndex(x => x.id === existingId);
       const before = JSON.parse(JSON.stringify(ENTRIES[i]));
@@ -1222,7 +1332,9 @@ function rowHtml(e) {
   return '<button class="row ' + e.direction + '" data-id="' + e.id + '" type="button">' +
     '<span class="d num">' + dmy(e.date) + '</span>' +
     '<span class="t">' + esc(e.note || e.rawText) +
-      '<span class="c">' + esc(e.category) + ' · ' + esc(bucketName(e.bucket)) + '</span></span>' +
+      '<span class="c">' + esc(e.category) + ' · ' + esc(bucketName(e.bucket)) +
+        (splitOf(e) ? ' · tách ' + money(splitOf(e).amount) + ' sang ' + esc(bucketName(splitOf(e).to)) : '') +
+      '</span></span>' +
     '<span class="a num">' + (e.direction === "thu" ? "+" : "−") + money(e.amountVnd) + '</span>' +
   '</button>';
 }
@@ -1273,7 +1385,8 @@ function bindRows(root) {
       if (!e) return;
       openConfirm({
         amountVnd: e.amountVnd, direction: e.direction, date: e.date,
-        category: e.category, bucket: e.bucket, note: e.note, rawText: e.rawText, flags: []
+        category: e.category, bucket: e.bucket, splitVnd: e.splitVnd, splitBucket: e.splitBucket,
+        note: e.note, rawText: e.rawText, flags: []
       }, e.id);
     });
   });
@@ -1287,17 +1400,22 @@ function totalsHtml(s) {
 function bucketCardsHtml(list) {
   const r = bucketSums(list);
   return bucketList().map(b => {
-    const v = r.map[b.id], net = v.thu - v.chi;
+    const v = r.map[b.id], net = v.thuEff - v.chiEff;
     const col = net < 0 ? ' style="color:var(--chi)"' : (net > 0 ? ' style="color:var(--thu)"' : '');
+    const out = v.thuOut + v.chiOut, inn = v.thuIn + v.chiIn;
+    let extra = "";
+    if (out) extra = '<div class="s num">gộp ' + money(v.thu + v.chi) + ' · chuyển đi ' + money(out) + '</div>';
+    else if (inn) extra = '<div class="s num">gồm ' + money(inn) + ' nhận từ quỹ khác</div>';
     return '<div><div class="k">' + esc(b.name) + '</div>' +
       '<div class="v num"' + col + '>' + money(net) + '</div>' +
-      '<div class="s num">thu ' + money(v.thu) + ' · chi ' + money(v.chi) + '</div></div>';
+      '<div class="s num">thu ' + money(v.thuEff) + ' · chi ' + money(v.chiEff) + '</div>' +
+      extra + '</div>';
   }).join("");
 }
 function auditHtml(list) {
   const a = bucketAudit(list);
   if (a.ok) return "";
-  return '<div class="audit">Lệch sổ: cộng các quỹ ra thu ' + money(a.thu) + ' / chi ' + money(a.chi) +
+  return '<div class="audit">Lệch sổ: cộng các quỹ ra thu ' + money(a.thuE) + ' / chi ' + money(a.chiE) +
     ', tổng sổ là thu ' + money(a.s.thu) + ' / chi ' + money(a.s.chi) +
     (a.orphan.n ? ' · ' + a.orphan.n + ' bản ghi chưa phân quỹ' : '') + '. Kiểm tra lại.</div>';
 }
@@ -1374,8 +1492,14 @@ function barsHtml(cats, total, color) {
 function bucketReportHtml(list) {
   const r = bucketSums(list);
   const rows = bucketList().map(b => {
-    const v = r.map[b.id], net = v.thu - v.chi;
-    const days = byDay(list.filter(e => e.bucket === b.id));
+    const v = r.map[b.id], net = v.thuEff - v.chiEff;
+    const days = byDayForBucket(list, b.id);
+    const out = v.thuOut + v.chiOut, inn = v.thuIn + v.chiIn;
+    const recon = (out || inn)
+      ? '<p style="color:var(--ink-3);font-size:12px;margin:0 0 8px">Gộp ' + money(v.thu + v.chi) +
+        (out ? ' · chuyển sang quỹ khác −' + money(out) : '') +
+        (inn ? ' · nhận từ quỹ khác +' + money(inn) : '') +
+        ' · còn ' + money(v.thuEff + v.chiEff) + ' tính vào quỹ này.</p>' : "";
     const body = days.length
       ? '<div class="scroll"><table><thead><tr><th>Ngày</th><th class="r">Thu</th><th class="r">Chi</th>' +
         '<th class="r">Còn lại</th></tr></thead><tbody>' +
@@ -1391,9 +1515,9 @@ function bucketReportHtml(list) {
           '<th class="r num" style="color:var(--chi)">' + money(v.chi) + '</th>' +
           '<th class="r num">' + money(net) + '</th></tr></tfoot></table></div>'
       : '<p style="color:var(--ink-3);font-size:12.5px;margin:0 0 8px">Tháng này quỹ chưa có khoản nào.</p>';
-    return '<details><summary><span>' + esc(b.name) + '</span><span class="num">thu ' + money(v.thu) +
-      ' · chi ' + money(v.chi) + ' · còn ' + money(net) + '</span></summary>' +
-      '<div class="bd">' + body + '</div></details>';
+    return '<details><summary><span>' + esc(b.name) + '</span><span class="num">thu ' + money(v.thuEff) +
+      ' · chi ' + money(v.chiEff) + ' · còn ' + money(net) + '</span></summary>' +
+      '<div class="bd">' + recon + body + '</div></details>';
   }).join("");
   const warn = r.orphan.n
     ? '<p style="color:var(--chi);font-size:12.5px;margin:0">' + r.orphan.n + ' bản ghi chưa phân quỹ.</p>' : "";
@@ -1419,7 +1543,9 @@ function reportInnerHtml(d) {
     (d.list.length ? d.list.map(e =>
       '<tr><td class="num">' + dmy(e.date) + '</td><td>' + esc(e.note || e.rawText) + '</td>' +
       '<td>' + esc(e.category) + '</td>' +
-      '<td>' + esc(bucketName(e.bucket)) + '</td>' +
+      '<td>' + esc(bucketName(e.bucket)) +
+        (splitOf(e) ? '<br><span style="color:var(--ink-3);font-size:11px">tách ' +
+          money(splitOf(e).amount) + ' → ' + esc(bucketName(splitOf(e).to)) + '</span>' : '') + '</td>' +
       '<td class="r num" style="color:var(--thu)">' + (e.direction === "thu" ? money(e.amountVnd) : "") + '</td>' +
       '<td class="r num" style="color:var(--chi)">' + (e.direction === "chi" ? money(e.amountVnd) : "") + '</td></tr>'
     ).join("") : '<tr><td colspan="6" style="color:var(--ink-3);padding:14px 4px">Tháng này chưa có bản ghi.</td></tr>') +
@@ -1664,9 +1790,13 @@ function renderSettings() {
   $("#cfg-undo").value = CONFIG.UNDO_SECONDS;
   $("#cfg-past").value = CONFIG.MAX_PAST_DAYS;
   $("#cfg-bucket").value = bucketsToText(bucketList());
-  $("#cfg-bucketdef").innerHTML = bucketList().map(b =>
-    '<option value="' + esc(b.id) + '"' + (b.id === bucketDefault() ? " selected" : "") + '>' +
+  const bopt = sel => bucketList().map(b =>
+    '<option value="' + esc(b.id) + '"' + (b.id === sel ? " selected" : "") + '>' +
     esc(b.name) + '</option>').join("");
+  $("#cfg-bucketdef").innerHTML = bopt(bucketDefault());
+  $("#cfg-splitcode").value = CONFIG.SPLIT_CODE || "!chia";
+  $("#cfg-splitfrom").innerHTML = bopt(CONFIG.SPLIT_FROM);
+  $("#cfg-splitto").innerHTML = bopt(CONFIG.SPLIT_TO);
   const ms = new Set(ENTRIES.map(e => monthOf(e.date)));
   $("#stat-line").textContent = ENTRIES.length + " bản ghi, trải " + ms.size + " tháng.";
   refreshInstall();
@@ -1677,6 +1807,13 @@ $("#btn-savecfg").addEventListener("click", () => {
   CONFIG.BUCKETS = bk.list;
   const defSel = $("#cfg-bucketdef").value;
   CONFIG.DEFAULT_BUCKET = bk.list.some(b => b.id === defSel) ? defSel : bk.list[0].id;
+  const sc = String($("#cfg-splitcode").value || "").trim();
+  if (sc && !/^!/.test(sc)) { alertBox('Lệnh tách phải bắt đầu bằng dấu "!". Ví dụ !chia'); return; }
+  CONFIG.SPLIT_CODE = sc || "!chia";
+  const sf = $("#cfg-splitfrom").value, st = $("#cfg-splitto").value;
+  if (sf === st) { alertBox("Quỹ nhận phần tách phải khác quỹ nguồn."); return; }
+  CONFIG.SPLIT_FROM = bk.list.some(b => b.id === sf) ? sf : bk.list[0].id;
+  CONFIG.SPLIT_TO   = bk.list.some(b => b.id === st) ? st : bk.list[bk.list.length - 1].id;
   CONFIG.CATEGORIES_INCOME = textToCats($("#cfg-thu").value);
   CONFIG.CATEGORIES_EXPENSE = textToCats($("#cfg-chi").value);
   CONFIG.ROUND_TO_VND = Math.max(1, +$("#cfg-round").value || 500);
