@@ -1,0 +1,26 @@
+DUA SO THU CHI LEN GITHUB PAGES  (2 phut)
+
+Kho da tao san: https://github.com/dodaihoc4869/so-thu-chi
+
+BUOC 1 - TAI FILE LEN
+  Mo:  https://github.com/dodaihoc4869/so-thu-chi/upload/main
+  Keo 3 thu trong thu muc nay tha vao trang:
+      index.html   -   thu muc hh   -   thu muc htp
+  (KHONG keo ca thu muc so-thu-chi, chi keo 3 thu ben trong)
+  Bam nut xanh: Commit changes
+
+BUOC 2 - BAT PAGES
+  Vao tab Settings  ->  muc Pages o cot trai
+  Source:  Deploy from a branch
+  Branch:  main   va   / (root)
+  Bam Save
+
+BUOC 3 - DOI 1 PHUT ROI MO
+  https://dodaihoc4869.github.io/so-thu-chi/
+      /hh/    = so cua Nguyen Thi Hai Huong
+      /htp/   = so cua Ha Thi Phuong
+
+BUOC 4 - CAI RA MAN HINH CHINH
+  Mo link tren bang Chrome tren dien thoai.
+  Bam nut "Cai" mau xanh trong app  ->  hop cai that cua he thong hien ra.
+  Hoac: menu ba cham cua Chrome -> "Cai dat ung dung".
