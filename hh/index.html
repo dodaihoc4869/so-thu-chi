@@ -173,10 +173,12 @@ button,input,select,textarea{font:inherit;color:inherit}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bkt .v{font-size:18px;font-weight:700;margin-top:3px;letter-spacing:-.035em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bkt .v.f2{font-size:15px} .bkt .v.f3{font-size:12.5px} .bkt .v.f4{font-size:11px}
 .bkt .s{font-size:10px;color:var(--ink-3);margin-top:2px;line-height:1.35}
 .split2{display:grid;grid-template-columns:1fr 120px;gap:8px}
 .field .hint{font-size:11.5px;color:var(--ink-3);margin:5px 0 0;line-height:1.4}
-@media (max-width:400px){.bkt .v{font-size:15.5px}.bkt .s{font-size:9px}}
+@media (max-width:400px){.bkt .v{font-size:15.5px}.bkt .v.f2{font-size:13px}
+  .bkt .v.f3{font-size:11px}.bkt .v.f4{font-size:9.5px}.bkt .s{font-size:9px}}
 .audit{margin-top:10px;padding:10px 12px;border-radius:var(--radius);background:var(--chi-soft);
   border:1px solid var(--chi);color:var(--chi);font-size:12.5px;font-weight:600}
 .bktrep details{border:1px solid var(--line);border-radius:8px;margin-bottom:8px;background:var(--surface)}
@@ -387,6 +389,9 @@ button,input,select,textarea{font:inherit;color:inherit}
       <div id="installbar"></div>
       <div id="demobar"></div>
 
+      <div class="monthlabel" style="margin:16px 2px 7px">Tổng từ trước tới giờ
+        <span class="tip">cộng dồn mọi tháng</span></div>
+      <div class="bkt" id="buckets-all"></div>
       <div class="monthlabel" style="margin:16px 2px 7px">Chi tháng này
         <span class="tip">khoản thu không tính vào đây</span></div>
       <div class="bkt" id="buckets"></div>
@@ -1409,15 +1414,19 @@ function totalsHtml(s) {
          '<div><div class="k">Còn lại</div><div class="v num">' + money(s.con) + '</div></div>';
 }
 
-function bucketCardsHtml(list) {
+function bucketCardsHtml(list, compact) {
   const r = bucketSums(list);
   return bucketList().map(b => {
     const v = r.map[b.id];
     let extra = "";
-    if (v.out) extra = '<div class="s num">gộp ' + money(v.chi) + ' · chuyển đi ' + money(v.out) + '</div>';
+    if (compact) extra = "";
+    else if (v.out) extra = '<div class="s num">gộp ' + money(v.chi) + ' · chuyển đi ' + money(v.out) + '</div>';
     else if (v.inn) extra = '<div class="s num">gồm ' + money(v.inn) + ' nhận từ quỹ khác</div>';
+    const txt = money(v.eff);
+    // co chữ theo số chữ số để số tiền lớn không bị cắt cụt
+    const fit = txt.length <= 7 ? "" : txt.length <= 9 ? " f2" : txt.length <= 11 ? " f3" : " f4";
     return '<div><div class="k">' + esc(b.name) + '</div>' +
-      '<div class="v num"' + (v.eff ? ' style="color:var(--chi)"' : '') + '>' + money(v.eff) + '</div>' +
+      '<div class="v num' + fit + '"' + (v.eff ? ' style="color:var(--chi)"' : '') + '>' + txt + '</div>' +
       extra + '</div>';
   }).join("");
 }
@@ -1432,7 +1441,8 @@ function auditHtml(list) {
 function renderGhi() {
   const m = monthOf(todayISO());
   const mlist = inMonth(m);
-  $("#buckets").innerHTML = bucketCardsHtml(mlist);
+  $("#buckets-all").innerHTML = bucketCardsHtml(ENTRIES, true);   // cộng dồn mọi tháng
+  $("#buckets").innerHTML = bucketCardsHtml(mlist);               // riêng tháng này, có chi tiết
   $("#audit").innerHTML = auditHtml(ENTRIES);
   const recent = ENTRIES.slice().sort((a, b) =>
     b.date.localeCompare(a.date) || b.createdAt - a.createdAt).slice(0, 10);
