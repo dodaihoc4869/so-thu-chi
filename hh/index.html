@@ -388,6 +388,8 @@ button,input,select,textarea{font:inherit;color:inherit}
       <div id="demobar"></div>
 
       <div class="totals" id="totals"></div>
+      <div class="monthlabel" style="margin:16px 2px 6px">Chi theo quỹ
+        <span class="tip">khoản thu không tính vào đây</span></div>
       <div class="bkt" id="buckets"></div>
       <div id="audit"></div>
 
@@ -685,7 +687,8 @@ const FLAG_TEXT = {
   7: "Số tiền lớn — xác nhận lại",
   8: "Có từ hai mã quỹ trong câu",
   9: "Lệnh tách thiếu số tiền",
-  10: "Số tách lớn hơn số tiền của khoản"
+  10: "Số tách lớn hơn số tiền của khoản",
+  11: "Quỹ và lệnh tách chỉ dùng cho khoản chi"
 };
 
 const AMBIG_DATE = ["tuần trước", "tuan truoc", "tuần rồi", "tuan roi", "đầu tháng", "dau thang",
@@ -969,10 +972,16 @@ function parseSentence(raw, today) {
   else if (direction === "chi") category = CONFIG.CATEGORIES_EXPENSE[CONFIG.CATEGORIES_EXPENSE.length - 1].name;
 
   // Lệnh tách kéo khoản về quỹ nguồn, trừ khi câu đã gõ một mã quỹ khác.
-  const bucketFinal = (sp.used && !explicitBucket && CONFIG.SPLIT_FROM) ? CONFIG.SPLIT_FROM : bk.id;
+  let bucketFinal = (sp.used && !explicitBucket && CONFIG.SPLIT_FROM) ? CONFIG.SPLIT_FROM : bk.id;
   let splitAmt = sp.amount || 0;
   if (splitAmt && CONFIG.SPLIT_TO === bucketFinal) splitAmt = 0;
   if (splitAmt && amount != null && splitAmt > amount) { flags.push(10); splitAmt = amount; }
+  // Quỹ chỉ theo dõi tiền chi. Khoản thu không vào quỹ nào, gõ mã thì cờ hoá chứ không im lặng.
+  if (direction === "thu") {
+    if (explicitBucket || sp.used) flags.push(11);
+    bucketFinal = bucketDefault();
+    splitAmt = 0;
+  }
 
   const uniq = [...new Set(flags)].sort((a, b) => a - b);
   return {
@@ -996,55 +1005,44 @@ function sums(list) {
   list.forEach(e => { if (e.direction === "thu") thu += e.amountVnd; else chi += e.amountVnd; });
   return { thu, chi, con: thu - chi };
 }
+/** QUỸ CHỈ THEO DÕI TIỀN CHI. Khoản thu không tính vào quỹ nào. */
 function bucketSums(list) {
   const map = {};
-  bucketList().forEach(b => {
-    map[b.id] = { thu: 0, chi: 0, thuOut: 0, chiOut: 0, thuIn: 0, chiIn: 0, thuEff: 0, chiEff: 0 };
-  });
-  const orphan = { thu: 0, chi: 0, n: 0 };
+  bucketList().forEach(b => { map[b.id] = { chi: 0, out: 0, inn: 0, eff: 0 }; });
+  const orphan = { chi: 0, n: 0 };
   list.forEach(e => {
+    if (e.direction !== "chi") return;
     const t = map[e.bucket];
-    if (!t) { orphan.n++; if (e.direction === "thu") orphan.thu += e.amountVnd; else orphan.chi += e.amountVnd; return; }
-    if (e.direction === "thu") t.thu += e.amountVnd; else t.chi += e.amountVnd;
+    if (!t) { orphan.n++; orphan.chi += e.amountVnd; return; }
+    t.chi += e.amountVnd;
     const sp = splitOf(e);
     if (!sp) return;
     const to = map[sp.to];
     if (!to) return;                                  // quỹ nhận không còn: coi như không tách
-    if (e.direction === "thu") { t.thuOut += sp.amount; to.thuIn += sp.amount; }
-    else { t.chiOut += sp.amount; to.chiIn += sp.amount; }
+    t.out += sp.amount; to.inn += sp.amount;
   });
-  Object.keys(map).forEach(k => {
-    const v = map[k];
-    v.thuEff = v.thu - v.thuOut + v.thuIn;
-    v.chiEff = v.chi - v.chiOut + v.chiIn;
-  });
+  Object.keys(map).forEach(k => { map[k].eff = map[k].chi - map[k].out + map[k].inn; });
   return { map, orphan };
 }
-/** Số theo ngày của một quỹ, đã tính cả phần chuyển đi và nhận về. */
+/** Tiền chi theo ngày của một quỹ, đã tính cả phần chuyển đi và nhận về. */
 function byDayForBucket(list, id) {
   const map = {};
-  const add = (date, dir, v) => {
-    if (!v) return;
-    const d = map[date] || (map[date] = { thu: 0, chi: 0 });
-    if (dir === "thu") d.thu += v; else d.chi += v;
-  };
+  const add = (date, v) => { if (v) map[date] = (map[date] || 0) + v; };
   list.forEach(e => {
+    if (e.direction !== "chi") return;
     const sp = splitOf(e);
-    if (e.bucket === id) add(e.date, e.direction, e.amountVnd - (sp && sp.to !== id ? sp.amount : 0));
-    if (sp && sp.to === id && e.bucket !== id) add(e.date, e.direction, sp.amount);
+    if (e.bucket === id) add(e.date, e.amountVnd - (sp && sp.to !== id ? sp.amount : 0));
+    if (sp && sp.to === id && e.bucket !== id) add(e.date, sp.amount);
   });
   return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
 }
 /** Tự kiểm: tổng các quỹ phải bằng tổng sổ. Lệch thì hiện cảnh báo đỏ, không im lặng. */
 function bucketAudit(list) {
   const s = sums(list); const r = bucketSums(list);
-  let thu = r.orphan.thu, chi = r.orphan.chi, thuE = r.orphan.thu, chiE = r.orphan.chi;
-  Object.keys(r.map).forEach(k => {
-    thu += r.map[k].thu;   chi += r.map[k].chi;
-    thuE += r.map[k].thuEff; chiE += r.map[k].chiEff;
-  });
-  return { ok: thu === s.thu && chi === s.chi && thuE === s.thu && chiE === s.chi && r.orphan.n === 0,
-           thu, chi, thuE, chiE, s, orphan: r.orphan, map: r.map };
+  let gross = r.orphan.chi, eff = r.orphan.chi;
+  Object.keys(r.map).forEach(k => { gross += r.map[k].chi; eff += r.map[k].eff; });
+  return { ok: gross === s.chi && eff === s.chi && r.orphan.n === 0,
+           gross, eff, s, orphan: r.orphan, map: r.map };
 }
 function byDay(list) {
   const map = {};
@@ -1160,8 +1158,9 @@ function showEcho(e) {
     '<div class="echo is-' + e.direction + '">' +
       '<strong>' + (e.direction === "thu" ? "Thu" : "Chi") + '</strong>' +
       '<span class="num">' + money(e.amountVnd) + '</span>' +
-      '<span class="meta">' + esc(e.category) + ' · ' + esc(bucketName(e.bucket)) +
-        (splitOf(e) ? ' · tách ' + money(splitOf(e).amount) + ' sang ' + esc(bucketName(splitOf(e).to)) : '') +
+      '<span class="meta">' + esc(e.category) +
+        (e.direction === "chi" ? ' · ' + esc(bucketName(e.bucket)) +
+          (splitOf(e) ? ' · tách ' + money(splitOf(e).amount) + ' sang ' + esc(bucketName(splitOf(e).to)) : '') : '') +
         ' · ' + dmy(e.date) + '</span>' +
       '<button class="flip" type="button">Đổi thành ' + (e.direction === "thu" ? "Chi" : "Thu") + '</button>' +
     '</div>';
@@ -1242,11 +1241,11 @@ function openConfirm(p, existingId) {
     '<div class="field' + (missDate ? " miss" : "") + '"><label>Ngày</label>' +
       '<input id="f-date" type="date" value="' + p.date + '"></div>' +
     '<div class="field"><label>Hạng mục</label><select id="f-cat"></select></div>' +
-    '<div class="field' + (missBucket ? " miss" : "") + '"><label>Quỹ</label><select id="f-bucket">' +
+    '<div class="field' + (missBucket ? " miss" : "") + '" id="fw-bucket"><label>Quỹ</label><select id="f-bucket">' +
       bucketList().map(b => '<option value="' + esc(b.id) + '"' +
         (b.id === (p.bucket || bucketDefault()) ? " selected" : "") + '>' + esc(b.name) + '</option>').join("") +
     '</select></div>' +
-    '<div class="field' + (missSplit ? " miss" : "") + '"><label>Tách một phần sang quỹ khác</label>' +
+    '<div class="field' + (missSplit ? " miss" : "") + '" id="fw-split"><label>Tách một phần sang quỹ khác</label>' +
       '<div class="split2"><select id="f-splitb">' +
         bucketList().map(b => '<option value="' + esc(b.id) + '"' +
           (b.id === (p.splitBucket || CONFIG.SPLIT_TO) ? " selected" : "") + '>' + esc(b.name) + '</option>').join("") +
@@ -1270,12 +1269,20 @@ function openConfirm(p, existingId) {
     $("#f-cat").innerHTML = list.map(c =>
       '<option' + (c.name === p.category ? " selected" : "") + '>' + esc(c.name) + '</option>').join("");
   };
+  // Quỹ chỉ dùng cho khoản chi, khoản thu thì giấu hẳn hai ô này đi.
+  const toggleBucketFields = () => {
+    const hide = dir === "thu";
+    $("#fw-bucket").hidden = hide;
+    $("#fw-split").hidden = hide;
+  };
   fillCats();
+  toggleBucketFields();
   const setDir = d => {
     dir = d;
     $("#f-thu").setAttribute("aria-pressed", String(d === "thu"));
     $("#f-chi").setAttribute("aria-pressed", String(d === "chi"));
     fillCats();
+    toggleBucketFields();
   };
   $("#f-thu").onclick = () => setDir("thu");
   $("#f-chi").onclick = () => setDir("chi");
@@ -1294,12 +1301,17 @@ function openConfirm(p, existingId) {
       category: $("#f-cat").value, bucket: $("#f-bucket").value, note: $("#f-note").value.trim(),
       rawText: p.rawText, flag: null, updatedAt: Date.now()
     };
-    const spAmt = Math.round(Number(String($("#f-split").value).replace(/[^\d]/g, "")) || 0);
-    const spTo = $("#f-splitb").value;
-    if (spAmt && spTo === rec.bucket) { alertBox("Quỹ nhận phải khác quỹ của khoản này."); return; }
-    if (spAmt > amt) { alertBox("Số tách (" + money(spAmt) + ") lớn hơn số tiền của khoản (" + money(amt) + ")."); return; }
-    rec.splitVnd = spAmt || null;
-    rec.splitBucket = spAmt ? spTo : null;
+    if (dir === "thu") {                       // quỹ chỉ theo dõi tiền chi
+      rec.bucket = bucketDefault();
+      rec.splitVnd = null; rec.splitBucket = null;
+    } else {
+      const spAmt = Math.round(Number(String($("#f-split").value).replace(/[^\d]/g, "")) || 0);
+      const spTo = $("#f-splitb").value;
+      if (spAmt && spTo === rec.bucket) { alertBox("Quỹ nhận phải khác quỹ của khoản này."); return; }
+      if (spAmt > amt) { alertBox("Số tách (" + money(spAmt) + ") lớn hơn số tiền của khoản (" + money(amt) + ")."); return; }
+      rec.splitVnd = spAmt || null;
+      rec.splitBucket = spAmt ? spTo : null;
+    }
     if (isEdit) {
       const i = ENTRIES.findIndex(x => x.id === existingId);
       const before = JSON.parse(JSON.stringify(ENTRIES[i]));
@@ -1332,8 +1344,9 @@ function rowHtml(e) {
   return '<button class="row ' + e.direction + '" data-id="' + e.id + '" type="button">' +
     '<span class="d num">' + dmy(e.date) + '</span>' +
     '<span class="t">' + esc(e.note || e.rawText) +
-      '<span class="c">' + esc(e.category) + ' · ' + esc(bucketName(e.bucket)) +
-        (splitOf(e) ? ' · tách ' + money(splitOf(e).amount) + ' sang ' + esc(bucketName(splitOf(e).to)) : '') +
+      '<span class="c">' + esc(e.category) +
+        (e.direction === "chi" ? ' · ' + esc(bucketName(e.bucket)) +
+          (splitOf(e) ? ' · tách ' + money(splitOf(e).amount) + ' sang ' + esc(bucketName(splitOf(e).to)) : '') : '') +
       '</span></span>' +
     '<span class="a num">' + (e.direction === "thu" ? "+" : "−") + money(e.amountVnd) + '</span>' +
   '</button>';
@@ -1400,24 +1413,21 @@ function totalsHtml(s) {
 function bucketCardsHtml(list) {
   const r = bucketSums(list);
   return bucketList().map(b => {
-    const v = r.map[b.id], net = v.thuEff - v.chiEff;
-    const col = net < 0 ? ' style="color:var(--chi)"' : (net > 0 ? ' style="color:var(--thu)"' : '');
-    const out = v.thuOut + v.chiOut, inn = v.thuIn + v.chiIn;
+    const v = r.map[b.id];
     let extra = "";
-    if (out) extra = '<div class="s num">gộp ' + money(v.thu + v.chi) + ' · chuyển đi ' + money(out) + '</div>';
-    else if (inn) extra = '<div class="s num">gồm ' + money(inn) + ' nhận từ quỹ khác</div>';
+    if (v.out) extra = '<div class="s num">gộp ' + money(v.chi) + ' · chuyển đi ' + money(v.out) + '</div>';
+    else if (v.inn) extra = '<div class="s num">gồm ' + money(v.inn) + ' nhận từ quỹ khác</div>';
     return '<div><div class="k">' + esc(b.name) + '</div>' +
-      '<div class="v num"' + col + '>' + money(net) + '</div>' +
-      '<div class="s num">thu ' + money(v.thuEff) + ' · chi ' + money(v.chiEff) + '</div>' +
+      '<div class="v num"' + (v.eff ? ' style="color:var(--chi)"' : '') + '>' + money(v.eff) + '</div>' +
       extra + '</div>';
   }).join("");
 }
 function auditHtml(list) {
   const a = bucketAudit(list);
   if (a.ok) return "";
-  return '<div class="audit">Lệch sổ: cộng các quỹ ra thu ' + money(a.thuE) + ' / chi ' + money(a.chiE) +
-    ', tổng sổ là thu ' + money(a.s.thu) + ' / chi ' + money(a.s.chi) +
-    (a.orphan.n ? ' · ' + a.orphan.n + ' bản ghi chưa phân quỹ' : '') + '. Kiểm tra lại.</div>';
+  return '<div class="audit">Lệch sổ: cộng chi các quỹ ra ' + money(a.eff) +
+    ', tổng chi của sổ là ' + money(a.s.chi) +
+    (a.orphan.n ? ' · ' + a.orphan.n + ' khoản chi chưa phân quỹ' : '') + '. Kiểm tra lại.</div>';
 }
 
 function renderGhi() {
@@ -1492,35 +1502,28 @@ function barsHtml(cats, total, color) {
 function bucketReportHtml(list) {
   const r = bucketSums(list);
   const rows = bucketList().map(b => {
-    const v = r.map[b.id], net = v.thuEff - v.chiEff;
+    const v = r.map[b.id];
     const days = byDayForBucket(list, b.id);
-    const out = v.thuOut + v.chiOut, inn = v.thuIn + v.chiIn;
-    const recon = (out || inn)
-      ? '<p style="color:var(--ink-3);font-size:12px;margin:0 0 8px">Gộp ' + money(v.thu + v.chi) +
-        (out ? ' · chuyển sang quỹ khác −' + money(out) : '') +
-        (inn ? ' · nhận từ quỹ khác +' + money(inn) : '') +
-        ' · còn ' + money(v.thuEff + v.chiEff) + ' tính vào quỹ này.</p>' : "";
+    const recon = (v.out || v.inn)
+      ? '<p style="color:var(--ink-3);font-size:12px;margin:0 0 8px">Gộp ' + money(v.chi) +
+        (v.out ? ' · chuyển sang quỹ khác −' + money(v.out) : '') +
+        (v.inn ? ' · nhận từ quỹ khác +' + money(v.inn) : '') +
+        ' · còn ' + money(v.eff) + ' tính vào quỹ này.</p>' : "";
     const body = days.length
-      ? '<div class="scroll"><table><thead><tr><th>Ngày</th><th class="r">Thu</th><th class="r">Chi</th>' +
-        '<th class="r">Còn lại</th></tr></thead><tbody>' +
+      ? '<div class="scroll"><table><thead><tr><th>Ngày</th><th class="r">Chi</th></tr></thead><tbody>' +
         days.map(function (row) {
-          const dd = row[0], x = row[1];
-          return '<tr><td class="num">' + dmy(dd) + '</td>' +
-            '<td class="r num" style="color:var(--thu)">' + (x.thu ? money(x.thu) : "") + '</td>' +
-            '<td class="r num" style="color:var(--chi)">' + (x.chi ? money(x.chi) : "") + '</td>' +
-            '<td class="r num">' + money(x.thu - x.chi) + '</td></tr>';
+          return '<tr><td class="num">' + dmy(row[0]) + '</td>' +
+            '<td class="r num" style="color:var(--chi)">' + money(row[1]) + '</td></tr>';
         }).join("") +
         '</tbody><tfoot><tr><th>Cả tháng</th>' +
-          '<th class="r num" style="color:var(--thu)">' + money(v.thu) + '</th>' +
-          '<th class="r num" style="color:var(--chi)">' + money(v.chi) + '</th>' +
-          '<th class="r num">' + money(net) + '</th></tr></tfoot></table></div>'
-      : '<p style="color:var(--ink-3);font-size:12.5px;margin:0 0 8px">Tháng này quỹ chưa có khoản nào.</p>';
-    return '<details><summary><span>' + esc(b.name) + '</span><span class="num">thu ' + money(v.thuEff) +
-      ' · chi ' + money(v.chiEff) + ' · còn ' + money(net) + '</span></summary>' +
+          '<th class="r num" style="color:var(--chi)">' + money(v.eff) + '</th></tr></tfoot></table></div>'
+      : '<p style="color:var(--ink-3);font-size:12.5px;margin:0 0 8px">Tháng này quỹ chưa chi khoản nào.</p>';
+    return '<details><summary><span>' + esc(b.name) + '</span>' +
+      '<span class="num">chi ' + money(v.eff) + '</span></summary>' +
       '<div class="bd">' + recon + body + '</div></details>';
   }).join("");
   const warn = r.orphan.n
-    ? '<p style="color:var(--chi);font-size:12.5px;margin:0">' + r.orphan.n + ' bản ghi chưa phân quỹ.</p>' : "";
+    ? '<p style="color:var(--chi);font-size:12.5px;margin:0">' + r.orphan.n + ' khoản chi chưa phân quỹ.</p>' : "";
   return '<div class="bktrep">' + rows + warn + '</div>';
 }
 function reportInnerHtml(d) {
@@ -1536,16 +1539,17 @@ function reportInnerHtml(d) {
     '<p class="delta">' + deltaTxt(d.s.thu, d.sp.thu, "Thu") + " " + deltaTxt(d.s.chi, d.sp.chi, "Chi") + '</p>' +
     '<div class="subhead">Thu theo hạng mục</div>' + barsHtml(d.thuCats, d.s.thu, "var(--thu)") +
     '<div class="subhead">Chi theo hạng mục</div>' + barsHtml(d.chiCats, d.s.chi, "var(--chi)") +
-    '<div class="subhead">Theo quỹ · bấm để xổ theo ngày</div>' + bucketReportHtml(d.list) +
+    '<div class="subhead">Chi theo quỹ · bấm để xổ theo ngày</div>' + bucketReportHtml(d.list) +
     '<div class="subhead">Toàn bộ bản ghi</div>' +
     '<div class="scroll"><table><thead><tr><th>Ngày</th><th>Nội dung</th><th>Hạng mục</th><th>Quỹ</th>' +
       '<th style="text-align:right">Thu</th><th style="text-align:right">Chi</th></tr></thead><tbody>' +
     (d.list.length ? d.list.map(e =>
       '<tr><td class="num">' + dmy(e.date) + '</td><td>' + esc(e.note || e.rawText) + '</td>' +
       '<td>' + esc(e.category) + '</td>' +
-      '<td>' + esc(bucketName(e.bucket)) +
+      '<td>' + (e.direction === "chi" ? esc(bucketName(e.bucket)) +
         (splitOf(e) ? '<br><span style="color:var(--ink-3);font-size:11px">tách ' +
-          money(splitOf(e).amount) + ' → ' + esc(bucketName(splitOf(e).to)) + '</span>' : '') + '</td>' +
+          money(splitOf(e).amount) + ' → ' + esc(bucketName(splitOf(e).to)) + '</span>' : '')
+        : '<span style="color:var(--ink-3)">—</span>') + '</td>' +
       '<td class="r num" style="color:var(--thu)">' + (e.direction === "thu" ? money(e.amountVnd) : "") + '</td>' +
       '<td class="r num" style="color:var(--chi)">' + (e.direction === "chi" ? money(e.amountVnd) : "") + '</td></tr>'
     ).join("") : '<tr><td colspan="6" style="color:var(--ink-3);padding:14px 4px">Tháng này chưa có bản ghi.</td></tr>') +

@@ -1,5 +1,5 @@
 const PREFIX = "so-thu-chi-hh-";
-const CACHE = PREFIX + "v7";
+const CACHE = PREFIX + "v8";
 const ASSETS = ["./", "./index.html", "./manifest.json",
                 "./icon-192.png?v=2", "./icon-512.png?v=2", "./icon-maskable-512.png?v=2"];
 
