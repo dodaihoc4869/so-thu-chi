@@ -154,11 +154,6 @@ button,input,select,textarea{font:inherit;color:inherit}
 .echo.is-chi{border-left-color:var(--chi)}
 
 /* ---- totals band ---- */
-.totals.one{grid-template-columns:1fr}
-.totals.one .k{font-size:10.5px}
-.totals.one .v{font-size:26px;letter-spacing:-.04em;margin-top:1px}
-@media (max-width:400px){.totals.one .v{font-size:23px}}
-.totals.one .s{font-size:11.5px;color:var(--ink-3);margin-top:3px}
 .totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin-top:14px;
   background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
 .totals div{padding:11px 10px;min-width:0}
@@ -172,16 +167,16 @@ button,input,select,textarea{font:inherit;color:inherit}
 /* ---- thẻ quỹ ---- */
 .bkt{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin-top:10px;
   background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
-.bkt div{padding:10px;min-width:0}
+.bkt div{padding:12px 10px;min-width:0}
 .bkt div+div{border-left:1px solid var(--line)}
 .bkt .k{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:600;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bkt .v{font-size:14.5px;font-weight:600;margin-top:2px;letter-spacing:-.03em;
+.bkt .v{font-size:18px;font-weight:700;margin-top:3px;letter-spacing:-.035em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bkt .s{font-size:10px;color:var(--ink-3);margin-top:2px;line-height:1.35}
 .split2{display:grid;grid-template-columns:1fr 120px;gap:8px}
 .field .hint{font-size:11.5px;color:var(--ink-3);margin:5px 0 0;line-height:1.4}
-@media (max-width:400px){.bkt .v{font-size:12.5px}.bkt .s{font-size:9px}}
+@media (max-width:400px){.bkt .v{font-size:15.5px}.bkt .s{font-size:9px}}
 .audit{margin-top:10px;padding:10px 12px;border-radius:var(--radius);background:var(--chi-soft);
   border:1px solid var(--chi);color:var(--chi);font-size:12.5px;font-weight:600}
 .bktrep details{border:1px solid var(--line);border-radius:8px;margin-bottom:8px;background:var(--surface)}
@@ -392,8 +387,7 @@ button,input,select,textarea{font:inherit;color:inherit}
       <div id="installbar"></div>
       <div id="demobar"></div>
 
-      <div class="totals one" id="totals"></div>
-      <div class="monthlabel" style="margin:14px 2px 6px">Chia theo quỹ
+      <div class="monthlabel" style="margin:16px 2px 7px">Chi tháng này
         <span class="tip">khoản thu không tính vào đây</span></div>
       <div class="bkt" id="buckets"></div>
       <div id="audit"></div>
@@ -1415,18 +1409,6 @@ function totalsHtml(s) {
          '<div><div class="k">Còn lại</div><div class="v num">' + money(s.con) + '</div></div>';
 }
 
-/** Băng trên màn Ghi: TỔNG CHI, cộng đúng từ ba thẻ quỹ bên dưới. */
-function ghiTotalsHtml(list) {
-  const r = bucketSums(list);
-  let tong = r.orphan.chi;
-  bucketList().forEach(b => { tong += r.map[b.id].eff; });
-  const s = sums(list);
-  const ten = bucketList().map(b => esc(b.name)).join(" + ");
-  return '<div><div class="k">Tổng chi tháng này</div>' +
-    '<div class="v num" style="color:var(--chi)">' + money(tong) + '</div>' +
-    '<div class="s num">' + ten + '  ·  thu ' + money(s.thu) + '  ·  còn lại ' + money(s.con) + '</div></div>';
-}
-
 function bucketCardsHtml(list) {
   const r = bucketSums(list);
   return bucketList().map(b => {
@@ -1450,7 +1432,6 @@ function auditHtml(list) {
 function renderGhi() {
   const m = monthOf(todayISO());
   const mlist = inMonth(m);
-  $("#totals").innerHTML = ghiTotalsHtml(mlist);
   $("#buckets").innerHTML = bucketCardsHtml(mlist);
   $("#audit").innerHTML = auditHtml(ENTRIES);
   const recent = ENTRIES.slice().sort((a, b) =>
