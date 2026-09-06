@@ -1,7 +1,7 @@
 const PREFIX = "so-thu-chi-htp-";
-const CACHE = PREFIX + "v4";
+const CACHE = PREFIX + "v5";
 const ASSETS = ["./", "./index.html", "./manifest.json",
-                "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png"];
+                "./icon-192.png?v=2", "./icon-512.png?v=2", "./icon-maskable-512.png?v=2"];
 
 self.addEventListener("install", e => {
   // cache:"reload" -> luon lay ban moi tu mang, khong dinh ban cu trong HTTP cache
