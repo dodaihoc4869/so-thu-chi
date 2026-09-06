@@ -1,4 +1,4 @@
-const CACHE = "so-thu-chi-htp-v2";
+const CACHE = "so-thu-chi-htp-v3";
 const ASSETS = ["./", "./index.html", "./manifest.json",
                 "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png"];
 
