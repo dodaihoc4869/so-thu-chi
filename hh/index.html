@@ -163,6 +163,28 @@ button,input,select,textarea{font:inherit;color:inherit}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:400px){.totals .v{font-size:13.5px}}
 .v.thu{color:var(--thu)} .v.chi{color:var(--chi)}
+
+/* ---- thẻ quỹ ---- */
+.bkt{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin-top:10px;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.bkt div{padding:10px;min-width:0}
+.bkt div+div{border-left:1px solid var(--line)}
+.bkt .k{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bkt .v{font-size:14.5px;font-weight:600;margin-top:2px;letter-spacing:-.03em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bkt .s{font-size:10px;color:var(--ink-3);margin-top:2px;line-height:1.35}
+@media (max-width:400px){.bkt .v{font-size:12.5px}.bkt .s{font-size:9px}}
+.audit{margin-top:10px;padding:10px 12px;border-radius:var(--radius);background:var(--chi-soft);
+  border:1px solid var(--chi);color:var(--chi);font-size:12.5px;font-weight:600}
+.bktrep details{border:1px solid var(--line);border-radius:8px;margin-bottom:8px;background:var(--surface)}
+.bktrep summary{cursor:pointer;padding:10px 12px;font-weight:600;font-size:13px;
+  display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.bktrep summary::-webkit-details-marker{display:none}
+.bktrep summary .num{font-weight:500;font-size:11.5px;color:var(--ink-3);text-align:right}
+.bktrep .bd{padding:0 12px 10px}
+.bktrep td.r,.bktrep th.r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+@media screen and (max-width:640px){#report .scroll table{min-width:560px}}
 .monthlabel{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);
   font-weight:600;margin:20px 2px 8px;display:flex;align-items:baseline;gap:8px}
 .monthlabel .tip{font-size:10.5px;letter-spacing:0;text-transform:none;font-weight:500;opacity:.85}
@@ -364,6 +386,8 @@ button,input,select,textarea{font:inherit;color:inherit}
       <div id="demobar"></div>
 
       <div class="totals" id="totals"></div>
+      <div class="bkt" id="buckets"></div>
+      <div id="audit"></div>
 
       <div class="monthlabel">Gần đây <span class="tip">giữ một dòng để xoá</span></div>
       <div class="ledger" id="recent"></div>
@@ -428,6 +452,21 @@ button,input,select,textarea{font:inherit;color:inherit}
         <div class="field">
           <label>Nhóm CHI</label>
           <textarea id="cfg-chi"></textarea>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Quỹ và mã gõ tắt</h3>
+        <p>Mỗi dòng: <code>tên quỹ = mã, mã</code>. Gõ mã trong câu là khoản đó vào quỹ tương ứng.
+           Mã bắt đầu bằng <code>!</code> sẽ được cắt khỏi ghi chú, tên quỹ viết đủ thì giữ lại.
+           Không bỏ được quỹ đang còn bản ghi.</p>
+        <div class="field">
+          <label>Danh sách quỹ</label>
+          <textarea id="cfg-bucket"></textarea>
+        </div>
+        <div class="field">
+          <label>Quỹ mặc định khi câu không có mã</label>
+          <select id="cfg-bucketdef"></select>
         </div>
       </div>
 
@@ -532,10 +571,17 @@ const DEFAULT_CONFIG = {
     { name: "quảng cáo", keys: ["quảng cáo", "quang cao", "ads", "tờ rơi", "to roi", "banner", "facebook"] },
     { name: "chi khác", keys: [] }
   ],
+  BUCKETS: [
+    { id: "an",    name: "Tiền ăn",   keys: ["!an", "!tienan", "tiền ăn", "tien an"] },
+    { id: "rieng", name: "Chi riêng", keys: ["!rieng", "!cr", "chi riêng", "chi rieng"] },
+    { id: "mobeo", name: "Mô beo",    keys: ["!mb", "!mobeo", "mô beo", "mo beo"] }
+  ],
+  DEFAULT_BUCKET: "rieng",
   BACKUP_REMIND_ON_NEW_MONTH: true
 };
 
-const K_ENTRIES = "thuchi.entries.v1";
+const K_ENTRIES_V1 = "thuchi.entries.v1";
+const K_ENTRIES = "thuchi.entries.v2";
 const K_CONFIG  = "thuchi.config.v1";
 const K_SEEDED  = "thuchi.seeded.v1";
 const K_THEME   = "thuchi.theme.v1";
@@ -559,9 +605,29 @@ function loadConfig() {
   } catch (e) { return JSON.parse(JSON.stringify(DEFAULT_CONFIG)); }
 }
 function saveConfig() { lsSet(K_CONFIG, JSON.stringify(CONFIG)); }
+/* ---- QUỸ: tiện ích dùng chung ---- */
+function bucketList() { return (CONFIG && CONFIG.BUCKETS) ? CONFIG.BUCKETS : DEFAULT_CONFIG.BUCKETS; }
+function bucketDefault() { return (CONFIG && CONFIG.DEFAULT_BUCKET) || DEFAULT_CONFIG.DEFAULT_BUCKET; }
+function bucketName(id) { const b = bucketList().find(x => x.id === id); return b ? b.name : "Chưa phân quỹ"; }
+/** Mọi bản ghi phải có đúng một quỹ. Thiếu hoặc lạ thì gán quỹ mặc định. */
+function withBucket(list) {
+  const ids = new Set(bucketList().map(b => b.id));
+  const def = bucketDefault();
+  return (list || []).map(e => (e && ids.has(e.bucket)) ? e : Object.assign({}, e, { bucket: def }));
+}
+/** Di trú một chiều v1 -> v2. Khoá v1 giữ nguyên làm bản dự phòng, không xoá. */
 function loadEntries() {
-  try { const raw = lsGet(K_ENTRIES); return raw ? JSON.parse(raw) : []; }
-  catch (e) { return []; }
+  try {
+    const raw = lsGet(K_ENTRIES);
+    if (raw) return withBucket(JSON.parse(raw));
+    const old = lsGet(K_ENTRIES_V1);
+    if (old) {
+      const migrated = withBucket(JSON.parse(old));
+      lsSet(K_ENTRIES, JSON.stringify(migrated));
+      return migrated;
+    }
+    return [];
+  } catch (e) { return []; }
 }
 function saveEntries() { lsSet(K_ENTRIES, JSON.stringify(ENTRIES)); }
 
@@ -592,7 +658,8 @@ const FLAG_TEXT = {
   4: "Số trần khó hiểu — nghìn hay đồng?",
   5: "Ngày mơ hồ",
   6: "Ngày không hợp lệ",
-  7: "Số tiền lớn — xác nhận lại"
+  7: "Số tiền lớn — xác nhận lại",
+  8: "Có từ hai mã quỹ trong câu"
 };
 
 const AMBIG_DATE = ["tuần trước", "tuan truoc", "tuần rồi", "tuan roi", "đầu tháng", "dau thang",
@@ -780,11 +847,46 @@ function findDirection(toks) {
   return { side: null, from: "không có động từ" };
 }
 
+/* ---- nhận diện QUỸ: chạy trên chuỗi thô vì tokens() nuốt mất dấu "!" ---- */
+function reEsc(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function bucketRe(key) {
+  return new RegExp("(^|[^\\p{L}\\p{N}!])" + reEsc(key) + "(?![\\p{L}\\p{N}])", "giu");
+}
+function bucketHits(raw) {
+  const low = String(raw).toLowerCase();
+  const ids = [];
+  for (const b of bucketList()) {
+    for (const k of (b.keys || [])) {
+      const key = String(k).toLowerCase().trim();
+      if (key && bucketRe(key).test(low)) { ids.push(b.id); break; }
+    }
+  }
+  return ids;
+}
+/** Chỉ cắt mã tắt có dấu "!". Tên quỹ viết đầy đủ là nội dung thật, giữ lại. */
+function stripBucketCodes(raw) {
+  let out = String(raw);
+  for (const b of bucketList())
+    for (const k of (b.keys || []))
+      if (String(k).startsWith("!")) out = out.replace(bucketRe(String(k).toLowerCase()), "$1");
+  return out.replace(/\s{2,}/g, " ").trim();
+}
+function findBucket(raw) {
+  const ids = bucketHits(raw);
+  if (ids.length === 0) return { id: bucketDefault(), flags: [] };
+  if (ids.length > 1)  return { id: ids[0], flags: [8] };
+  return { id: ids[0], flags: [] };
+}
+
 /** Bộ phân tích chính */
 function parseSentence(raw, today) {
   today = today || new Date(todayISO() + "T00:00:00");
   const flags = [];
-  const low = raw.toLowerCase();
+
+  const bk = findBucket(raw);          // quỹ nhận trước, mã bị cắt khỏi câu
+  bk.flags.forEach(f => flags.push(f));
+  const text = stripBucketCodes(raw);
+  const low = text.toLowerCase();
 
   const dt = parseDate(low, today);
   dt.flags.forEach(f => flags.push(f));
@@ -817,8 +919,8 @@ function parseSentence(raw, today) {
 
   const uniq = [...new Set(flags)].sort((a, b) => a - b);
   return {
-    amountVnd: amount, direction, date: dt.date, category,
-    note: raw.trim(), rawText: raw.trim(), flags: uniq, why
+    amountVnd: amount, direction, date: dt.date, category, bucket: bk.id,
+    note: text.trim(), rawText: raw.trim(), flags: uniq, why
   };
 }
 
@@ -835,6 +937,31 @@ function sums(list) {
   let thu = 0, chi = 0;
   list.forEach(e => { if (e.direction === "thu") thu += e.amountVnd; else chi += e.amountVnd; });
   return { thu, chi, con: thu - chi };
+}
+function bucketSums(list) {
+  const map = {}; bucketList().forEach(b => { map[b.id] = { thu: 0, chi: 0 }; });
+  const orphan = { thu: 0, chi: 0, n: 0 };
+  list.forEach(e => {
+    const t = map[e.bucket];
+    if (!t) { orphan.n++; if (e.direction === "thu") orphan.thu += e.amountVnd; else orphan.chi += e.amountVnd; return; }
+    if (e.direction === "thu") t.thu += e.amountVnd; else t.chi += e.amountVnd;
+  });
+  return { map, orphan };
+}
+/** Tự kiểm: tổng các quỹ phải bằng tổng sổ. Lệch thì hiện cảnh báo đỏ, không im lặng. */
+function bucketAudit(list) {
+  const s = sums(list); const r = bucketSums(list);
+  let thu = r.orphan.thu, chi = r.orphan.chi;
+  Object.keys(r.map).forEach(k => { thu += r.map[k].thu; chi += r.map[k].chi; });
+  return { ok: thu === s.thu && chi === s.chi && r.orphan.n === 0, thu, chi, s, orphan: r.orphan, map: r.map };
+}
+function byDay(list) {
+  const map = {};
+  list.forEach(e => {
+    const d = map[e.date] || (map[e.date] = { thu: 0, chi: 0 });
+    if (e.direction === "thu") d.thu += e.amountVnd; else d.chi += e.amountVnd;
+  });
+  return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
 }
 function prevMonth(m) {
   const [y, mm] = m.split("-").map(Number);
@@ -888,7 +1015,7 @@ function seedDemo() {
     const p = parseSentence(txt);
     return {
       id: uid(), amountVnd: p.amountVnd, direction: p.direction, date: d,
-      category: p.category, note: p.note, rawText: p.rawText, flag: null,
+      category: p.category, bucket: p.bucket, note: p.note, rawText: p.rawText, flag: null,
       demo: true, createdAt: Date.now(), updatedAt: Date.now()
     };
   });
@@ -924,7 +1051,7 @@ $("#quickform").addEventListener("submit", ev => {
   if (p.flags.length) { openConfirm(p, null); return; }
   const e = {
     id: uid(), amountVnd: p.amountVnd, direction: p.direction, date: p.date,
-    category: p.category, note: p.note, rawText: p.rawText, flag: null,
+    category: p.category, bucket: p.bucket, note: p.note, rawText: p.rawText, flag: null,
     createdAt: Date.now(), updatedAt: Date.now()
   };
   ENTRIES.push(e); saveEntries();
@@ -940,7 +1067,7 @@ function showEcho(e) {
     '<div class="echo is-' + e.direction + '">' +
       '<strong>' + (e.direction === "thu" ? "Thu" : "Chi") + '</strong>' +
       '<span class="num">' + money(e.amountVnd) + '</span>' +
-      '<span class="meta">' + esc(e.category) + ' · ' + dmy(e.date) + '</span>' +
+      '<span class="meta">' + esc(e.category) + ' · ' + esc(bucketName(e.bucket)) + ' · ' + dmy(e.date) + '</span>' +
       '<button class="flip" type="button">Đổi thành ' + (e.direction === "thu" ? "Chi" : "Thu") + '</button>' +
     '</div>';
   box.querySelector(".flip").addEventListener("click", () => {
@@ -1000,6 +1127,7 @@ function openConfirm(p, existingId) {
   const missAmt = p.flags && (p.flags.includes(1) || p.flags.includes(2) || p.flags.includes(4) || p.flags.includes(7));
   const missDir = p.flags && p.flags.includes(3);
   const missDate = p.flags && (p.flags.includes(5) || p.flags.includes(6));
+  const missBucket = p.flags && p.flags.includes(8);
 
   $("#modal").hidden = false;
   $("#modal").innerHTML =
@@ -1018,6 +1146,10 @@ function openConfirm(p, existingId) {
     '<div class="field' + (missDate ? " miss" : "") + '"><label>Ngày</label>' +
       '<input id="f-date" type="date" value="' + p.date + '"></div>' +
     '<div class="field"><label>Hạng mục</label><select id="f-cat"></select></div>' +
+    '<div class="field' + (missBucket ? " miss" : "") + '"><label>Quỹ</label><select id="f-bucket">' +
+      bucketList().map(b => '<option value="' + esc(b.id) + '"' +
+        (b.id === (p.bucket || bucketDefault()) ? " selected" : "") + '>' + esc(b.name) + '</option>').join("") +
+    '</select></div>' +
     '<div class="field"><label>Ghi chú</label><input id="f-note" value="' + esc(p.note || "") + '"></div>' +
     '<div class="actions">' +
       (isEdit ? '<button class="btn danger" id="f-del" type="button">Xoá</button>' : "") +
@@ -1055,7 +1187,7 @@ function openConfirm(p, existingId) {
     if (!dir) { $("#f-thu").focus(); return; }
     const rec = {
       amountVnd: amt, direction: dir, date: $("#f-date").value || todayISO(),
-      category: $("#f-cat").value, note: $("#f-note").value.trim(),
+      category: $("#f-cat").value, bucket: $("#f-bucket").value, note: $("#f-note").value.trim(),
       rawText: p.rawText, flag: null, updatedAt: Date.now()
     };
     if (isEdit) {
@@ -1090,7 +1222,7 @@ function rowHtml(e) {
   return '<button class="row ' + e.direction + '" data-id="' + e.id + '" type="button">' +
     '<span class="d num">' + dmy(e.date) + '</span>' +
     '<span class="t">' + esc(e.note || e.rawText) +
-      '<span class="c">' + esc(e.category) + '</span></span>' +
+      '<span class="c">' + esc(e.category) + ' · ' + esc(bucketName(e.bucket)) + '</span></span>' +
     '<span class="a num">' + (e.direction === "thu" ? "+" : "−") + money(e.amountVnd) + '</span>' +
   '</button>';
 }
@@ -1141,7 +1273,7 @@ function bindRows(root) {
       if (!e) return;
       openConfirm({
         amountVnd: e.amountVnd, direction: e.direction, date: e.date,
-        category: e.category, note: e.note, rawText: e.rawText, flags: []
+        category: e.category, bucket: e.bucket, note: e.note, rawText: e.rawText, flags: []
       }, e.id);
     });
   });
@@ -1152,9 +1284,30 @@ function totalsHtml(s) {
          '<div><div class="k">Còn lại</div><div class="v num">' + money(s.con) + '</div></div>';
 }
 
+function bucketCardsHtml(list) {
+  const r = bucketSums(list);
+  return bucketList().map(b => {
+    const v = r.map[b.id], net = v.thu - v.chi;
+    const col = net < 0 ? ' style="color:var(--chi)"' : (net > 0 ? ' style="color:var(--thu)"' : '');
+    return '<div><div class="k">' + esc(b.name) + '</div>' +
+      '<div class="v num"' + col + '>' + money(net) + '</div>' +
+      '<div class="s num">thu ' + money(v.thu) + ' · chi ' + money(v.chi) + '</div></div>';
+  }).join("");
+}
+function auditHtml(list) {
+  const a = bucketAudit(list);
+  if (a.ok) return "";
+  return '<div class="audit">Lệch sổ: cộng các quỹ ra thu ' + money(a.thu) + ' / chi ' + money(a.chi) +
+    ', tổng sổ là thu ' + money(a.s.thu) + ' / chi ' + money(a.s.chi) +
+    (a.orphan.n ? ' · ' + a.orphan.n + ' bản ghi chưa phân quỹ' : '') + '. Kiểm tra lại.</div>';
+}
+
 function renderGhi() {
   const m = monthOf(todayISO());
-  $("#totals").innerHTML = totalsHtml(sums(inMonth(m)));
+  const mlist = inMonth(m);
+  $("#totals").innerHTML = totalsHtml(sums(mlist));
+  $("#buckets").innerHTML = bucketCardsHtml(mlist);
+  $("#audit").innerHTML = auditHtml(ENTRIES);
   const recent = ENTRIES.slice().sort((a, b) =>
     b.date.localeCompare(a.date) || b.createdAt - a.createdAt).slice(0, 10);
   $("#recent").innerHTML = recent.length
@@ -1218,6 +1371,34 @@ function barsHtml(cats, total, color) {
       '<div class="track"><div class="fill" style="width:' + pct + '%;background:' + color + '"></div></div></div>';
   }).join("");
 }
+function bucketReportHtml(list) {
+  const r = bucketSums(list);
+  const rows = bucketList().map(b => {
+    const v = r.map[b.id], net = v.thu - v.chi;
+    const days = byDay(list.filter(e => e.bucket === b.id));
+    const body = days.length
+      ? '<div class="scroll"><table><thead><tr><th>Ngày</th><th class="r">Thu</th><th class="r">Chi</th>' +
+        '<th class="r">Còn lại</th></tr></thead><tbody>' +
+        days.map(function (row) {
+          const dd = row[0], x = row[1];
+          return '<tr><td class="num">' + dmy(dd) + '</td>' +
+            '<td class="r num" style="color:var(--thu)">' + (x.thu ? money(x.thu) : "") + '</td>' +
+            '<td class="r num" style="color:var(--chi)">' + (x.chi ? money(x.chi) : "") + '</td>' +
+            '<td class="r num">' + money(x.thu - x.chi) + '</td></tr>';
+        }).join("") +
+        '</tbody><tfoot><tr><th>Cả tháng</th>' +
+          '<th class="r num" style="color:var(--thu)">' + money(v.thu) + '</th>' +
+          '<th class="r num" style="color:var(--chi)">' + money(v.chi) + '</th>' +
+          '<th class="r num">' + money(net) + '</th></tr></tfoot></table></div>'
+      : '<p style="color:var(--ink-3);font-size:12.5px;margin:0 0 8px">Tháng này quỹ chưa có khoản nào.</p>';
+    return '<details><summary><span>' + esc(b.name) + '</span><span class="num">thu ' + money(v.thu) +
+      ' · chi ' + money(v.chi) + ' · còn ' + money(net) + '</span></summary>' +
+      '<div class="bd">' + body + '</div></details>';
+  }).join("");
+  const warn = r.orphan.n
+    ? '<p style="color:var(--chi);font-size:12.5px;margin:0">' + r.orphan.n + ' bản ghi chưa phân quỹ.</p>' : "";
+  return '<div class="bktrep">' + rows + warn + '</div>';
+}
 function reportInnerHtml(d) {
   return '<div class="rep">' +
     '<h2>Sổ thu chi ' + monthName(d.m).toLowerCase() + '</h2>' +
@@ -1231,16 +1412,18 @@ function reportInnerHtml(d) {
     '<p class="delta">' + deltaTxt(d.s.thu, d.sp.thu, "Thu") + " " + deltaTxt(d.s.chi, d.sp.chi, "Chi") + '</p>' +
     '<div class="subhead">Thu theo hạng mục</div>' + barsHtml(d.thuCats, d.s.thu, "var(--thu)") +
     '<div class="subhead">Chi theo hạng mục</div>' + barsHtml(d.chiCats, d.s.chi, "var(--chi)") +
+    '<div class="subhead">Theo quỹ · bấm để xổ theo ngày</div>' + bucketReportHtml(d.list) +
     '<div class="subhead">Toàn bộ bản ghi</div>' +
-    '<div class="scroll"><table><thead><tr><th>Ngày</th><th>Nội dung</th><th>Hạng mục</th>' +
+    '<div class="scroll"><table><thead><tr><th>Ngày</th><th>Nội dung</th><th>Hạng mục</th><th>Quỹ</th>' +
       '<th style="text-align:right">Thu</th><th style="text-align:right">Chi</th></tr></thead><tbody>' +
     (d.list.length ? d.list.map(e =>
       '<tr><td class="num">' + dmy(e.date) + '</td><td>' + esc(e.note || e.rawText) + '</td>' +
       '<td>' + esc(e.category) + '</td>' +
+      '<td>' + esc(bucketName(e.bucket)) + '</td>' +
       '<td class="r num" style="color:var(--thu)">' + (e.direction === "thu" ? money(e.amountVnd) : "") + '</td>' +
       '<td class="r num" style="color:var(--chi)">' + (e.direction === "chi" ? money(e.amountVnd) : "") + '</td></tr>'
-    ).join("") : '<tr><td colspan="5" style="color:var(--ink-3);padding:14px 4px">Tháng này chưa có bản ghi.</td></tr>') +
-    '</tbody><tfoot><tr><th colspan="3" style="border-top:2px solid var(--line-2)">Tổng cộng</th>' +
+    ).join("") : '<tr><td colspan="6" style="color:var(--ink-3);padding:14px 4px">Tháng này chưa có bản ghi.</td></tr>') +
+    '</tbody><tfoot><tr><th colspan="4" style="border-top:2px solid var(--line-2)">Tổng cộng</th>' +
       '<th class="num" style="text-align:right;border-top:2px solid var(--line-2);color:var(--thu)">' + money(d.s.thu) + '</th>' +
       '<th class="num" style="text-align:right;border-top:2px solid var(--line-2);color:var(--chi)">' + money(d.s.chi) + '</th></tr></tfoot>' +
     '</table></div>' +
@@ -1283,7 +1466,13 @@ function standaloneReport(m) {
   td{padding:7px 4px;border-bottom:1px solid var(--line);vertical-align:top}
   td.r,th.r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
   tfoot th{border-top:2px solid var(--line2);color:var(--ink);font-size:12px}
-  @media print{body{padding:0}}`;
+  .bktrep details{border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
+  .bktrep summary{cursor:pointer;padding:9px 11px;font-weight:600;font-size:13px;
+    display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+  .bktrep summary .num{font-weight:500;font-size:11.5px;color:var(--ink3)}
+  .bktrep .bd{padding:0 11px 9px}
+  .bktrep td.r,.bktrep th.r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  @media print{body{padding:0}.bktrep details{break-inside:avoid}}`;
   const bars = (cats, total, color) => cats.length ? cats.map(([n, v]) => {
     const pct = total ? Math.round(v / total * 100) : 0;
     return `<div class="bar"><div class="lab"><span>${esc(n)}</span><b>${money(v)} · ${pct}%</b></div>
@@ -1385,7 +1574,7 @@ $("#btn-exporthtml").addEventListener("click", () => {
     "Báo cáo tháng dạng file HTML tự đứng một mình, mở bằng trình duyệt và in ra PDF được.");
 });
 $("#btn-exportjson").addEventListener("click", () => {
-  const data = { app: "THU-CHI-APP", version: 1, exportedAt: new Date().toISOString(),
+  const data = { app: "THU-CHI-APP", version: 2, exportedAt: new Date().toISOString(),
                  config: CONFIG, entries: ENTRIES };
   offerFile("sao-luu-thu-chi-" + todayISO() + ".json", JSON.stringify(data, null, 2),
     "Bản sao lưu toàn bộ sổ. Giữ file này, mất máy vẫn khôi phục được.");
@@ -1406,12 +1595,13 @@ $("#btn-importjson").addEventListener("click", () => {
     let data;
     try { data = JSON.parse($("#imp").value); } catch (e) { alertBox("File không đọc được. Kiểm tra lại nội dung đã dán."); return; }
     if (!data || !Array.isArray(data.entries)) { alertBox("Không thấy danh sách bản ghi trong file này."); return; }
-    if (mode === "replace") ENTRIES = data.entries;
+    if (data.config) { CONFIG = Object.assign(CONFIG, data.config); saveConfig(); }
+    if (mode === "replace") ENTRIES = withBucket(data.entries);
     else {
       const ids = new Set(ENTRIES.map(e => e.id));
       data.entries.forEach(e => { if (!ids.has(e.id)) ENTRIES.push(e); });
+      ENTRIES = withBucket(ENTRIES);
     }
-    if (data.config) { CONFIG = Object.assign(CONFIG, data.config); saveConfig(); }
     saveEntries(); lsSet(K_SEEDED, "1"); closeModal(); renderAll();
     alertBox("Đã nhập " + data.entries.length + " bản ghi.");
   };
@@ -1436,6 +1626,34 @@ function textToCats(txt) {
     return { name, keys };
   }).filter(c => c.name);
 }
+function bucketsToText(list) { return list.map(b => b.name + " = " + (b.keys || []).join(", ")).join("\n"); }
+/** Sửa tên và mã theo vị trí dòng, GIỮ NGUYÊN id để không mồ côi bản ghi cũ. */
+function textToBuckets(txt, current) {
+  const lines = String(txt).split("\n").map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return { error: "Phải có ít nhất một quỹ." };
+  const list = [];
+  for (let i = 0; i < lines.length; i++) {
+    const p = lines[i].split("=");
+    const name = p[0].trim();
+    if (!name) return { error: "Dòng " + (i + 1) + " thiếu tên quỹ." };
+    const keys = (p[1] || "").split(",").map(k => k.trim()).filter(Boolean);
+    list.push({ id: current[i] ? current[i].id : ("q" + Date.now().toString(36) + i), name, keys });
+  }
+  const kept = new Set(list.map(b => b.id));
+  for (const b of current) {
+    if (kept.has(b.id)) continue;
+    const n = ENTRIES.filter(e => e.bucket === b.id).length;
+    if (n) return { error: 'Không bỏ được quỹ "' + b.name + '": còn ' + n + ' bản ghi. Chuyển các bản ghi đó sang quỹ khác trước.' };
+  }
+  const catKeys = [];
+  CONFIG.CATEGORIES_INCOME.concat(CONFIG.CATEGORIES_EXPENSE)
+    .forEach(c => (c.keys || []).forEach(k => catKeys.push(String(k).toLowerCase())));
+  for (const b of list) for (const k of b.keys)
+    if (catKeys.indexOf(String(k).toLowerCase()) >= 0)
+      return { error: 'Mã "' + k + '" của quỹ "' + b.name + '" trùng từ khoá hạng mục. Đổi mã khác.' };
+  return { list };
+}
+
 function renderSettings() {
   $("#cfg-thu").value = catsToText(CONFIG.CATEGORIES_INCOME);
   $("#cfg-chi").value = catsToText(CONFIG.CATEGORIES_EXPENSE);
@@ -1445,11 +1663,20 @@ function renderSettings() {
   $("#cfg-large").value = CONFIG.LARGE_AMOUNT_VND;
   $("#cfg-undo").value = CONFIG.UNDO_SECONDS;
   $("#cfg-past").value = CONFIG.MAX_PAST_DAYS;
+  $("#cfg-bucket").value = bucketsToText(bucketList());
+  $("#cfg-bucketdef").innerHTML = bucketList().map(b =>
+    '<option value="' + esc(b.id) + '"' + (b.id === bucketDefault() ? " selected" : "") + '>' +
+    esc(b.name) + '</option>').join("");
   const ms = new Set(ENTRIES.map(e => monthOf(e.date)));
   $("#stat-line").textContent = ENTRIES.length + " bản ghi, trải " + ms.size + " tháng.";
   refreshInstall();
 }
 $("#btn-savecfg").addEventListener("click", () => {
+  const bk = textToBuckets($("#cfg-bucket").value, bucketList());
+  if (bk.error) { alertBox(bk.error); return; }   // kiểm trước, chưa đụng gì vào CONFIG
+  CONFIG.BUCKETS = bk.list;
+  const defSel = $("#cfg-bucketdef").value;
+  CONFIG.DEFAULT_BUCKET = bk.list.some(b => b.id === defSel) ? defSel : bk.list[0].id;
   CONFIG.CATEGORIES_INCOME = textToCats($("#cfg-thu").value);
   CONFIG.CATEGORIES_EXPENSE = textToCats($("#cfg-chi").value);
   CONFIG.ROUND_TO_VND = Math.max(1, +$("#cfg-round").value || 500);
@@ -1458,7 +1685,7 @@ $("#btn-savecfg").addEventListener("click", () => {
   CONFIG.LARGE_AMOUNT_VND = Math.max(1000, +$("#cfg-large").value || 20000000);
   CONFIG.UNDO_SECONDS = Math.min(120, Math.max(1, +$("#cfg-undo").value || 10));
   CONFIG.MAX_PAST_DAYS = Math.max(1, +$("#cfg-past").value || 400);
-  saveConfig(); renderAll(); alertBox("Đã lưu cài đặt.");
+  saveConfig(); renderSettings(); renderAll(); alertBox("Đã lưu cài đặt.");
 });
 $("#btn-resetcfg").addEventListener("click", () => {
   CONFIG = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
